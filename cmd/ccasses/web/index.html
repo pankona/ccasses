@@ -78,6 +78,9 @@
     .tool-tree .t-children { list-style: none; display: none; background: #fafafa; }
     .tool-tree .t-children .t-row { padding-left: 1.5rem; }
     .tool-tree .t-children .t-bar { background: #76b7b2; }
+    .tool-tree .t-details { margin-left: 1.5rem; }
+    .tool-tree .t-detail-row { padding-left: 0.5rem; }
+    .tool-tree .t-detail { font-size: 0.85em; opacity: 0.8; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 500px; }
 
     #chart-point-tooltip {
       position: fixed; pointer-events: none; display: none;
@@ -220,8 +223,19 @@
       `;
 
       const toolAgg = {};
-      allSessions.forEach(s => Object.entries(s.tools||{}).forEach(([k,v]) => { toolAgg[k] = (toolAgg[k]||0)+v; }));
-      renderToolsChart('chart-tools', toolAgg);
+      const toolDetailsAgg = {};
+      const detailsCap = 200;
+      allSessions.forEach(s => {
+        Object.entries(s.tools||{}).forEach(([k,v]) => { toolAgg[k] = (toolAgg[k]||0)+v; });
+        Object.entries(s.toolDetails||{}).forEach(([k,arr]) => {
+          if (!toolDetailsAgg[k]) toolDetailsAgg[k] = [];
+          if (toolDetailsAgg[k].length < detailsCap) {
+            const remaining = detailsCap - toolDetailsAgg[k].length;
+            toolDetailsAgg[k] = toolDetailsAgg[k].concat(arr.slice(0, remaining));
+          }
+        });
+      });
+      renderToolsChart('chart-tools', toolAgg, toolDetailsAgg);
 
       const modelAgg = {};
       allSessions.forEach(s => Object.entries(s.models||{}).forEach(([k,v]) => {
@@ -277,7 +291,7 @@
         <div class="stat-card"><div class="label">Cache Created</div><div class="value">${fmt(t.cacheCreation)}</div></div>
       `;
 
-      renderToolsChart('detail-chart-tools', session.tools||{});
+      renderToolsChart('detail-chart-tools', session.tools||{}, session.toolDetails||{});
       renderPieChart('detail-chart-models',
         Object.entries(session.models||{}).filter(([k])=>k!=='<synthetic>'),
         detailChartModels, c => detailChartModels = c);
@@ -656,7 +670,20 @@
     }
 
     // ---- Collapsible tool tree ----
-    function renderToolsChart(containerId, toolObj) {
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function addToggle(triggerRow, targetUl) {
+      triggerRow.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const open = targetUl.style.display === 'block';
+        targetUl.style.display = open ? 'none' : 'block';
+        triggerRow.querySelector('.t-toggle').textContent = open ? '▶' : '▼';
+      });
+    }
+
+    function renderToolsChart(containerId, toolObj, toolDetails) {
       const container = document.getElementById(containerId);
       if (!container) return;
       container.innerHTML = '';
@@ -693,7 +720,7 @@
         const row = document.createElement('div');
         row.className = 't-row' + (hasChildren ? ' expandable' : '');
         row.innerHTML = `<span class="t-toggle">${hasChildren ? '▶' : ''}</span>` +
-          `<span class="t-name">${name}</span>` +
+          `<span class="t-name">${escapeHtml(name)}</span>` +
           `<span class="t-bar-wrap"><span class="t-bar" style="width:${count/maxCount*100}%"></span></span>` +
           `<span class="t-count">${count}</span>`;
         li.appendChild(row);
@@ -704,22 +731,36 @@
           const childItems = Object.entries(children).sort((a, b) => b[1] - a[1]);
           const maxChild = childItems[0]?.[1] || 1;
           childItems.forEach(([cName, cCount]) => {
+            const fullKey = name + ':' + cName;
+            const details = (toolDetails || {})[fullKey] || [];
+            const hasDetails = details.length > 0;
             const cLi = document.createElement('li');
-            cLi.innerHTML = `<div class="t-row">` +
-              `<span class="t-toggle"></span>` +
-              `<span class="t-name">${cName}</span>` +
+            const cRow = document.createElement('div');
+            cRow.className = 't-row' + (hasDetails ? ' expandable' : '');
+            cRow.innerHTML =
+              `<span class="t-toggle">${hasDetails ? '▶' : ''}</span>` +
+              `<span class="t-name">${escapeHtml(cName)}</span>` +
               `<span class="t-bar-wrap"><span class="t-bar" style="width:${cCount/maxChild*100}%"></span></span>` +
-              `<span class="t-count">${cCount}</span>` +
-              `</div>`;
+              `<span class="t-count">${cCount}</span>`;
+            cLi.appendChild(cRow);
+
+            if (hasDetails) {
+              const detailUl = document.createElement('ul');
+              detailUl.className = 't-children t-details';
+              details.forEach(d => {
+                const dLi = document.createElement('li');
+                dLi.innerHTML = `<div class="t-row t-detail-row">` +
+                  `<span class="t-name t-detail">${escapeHtml(d)}</span></div>`;
+                detailUl.appendChild(dLi);
+              });
+              cLi.appendChild(detailUl);
+              addToggle(cRow, detailUl);
+            }
             childUl.appendChild(cLi);
           });
           li.appendChild(childUl);
 
-          row.addEventListener('click', function() {
-            const open = childUl.style.display === 'block';
-            childUl.style.display = open ? 'none' : 'block';
-            row.querySelector('.t-toggle').textContent = open ? '▶' : '▼';
-          });
+          addToggle(row, childUl);
         }
         ul.appendChild(li);
       });

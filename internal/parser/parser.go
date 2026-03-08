@@ -112,13 +112,16 @@ func parseSubAgentFile(path string) (model.SubAgentInfo, error) {
 				updateTimeRange(&info.StartTime, &info.EndTime, ts)
 
 				if entry.Type == "assistant" && entry.Message != nil {
-					tools := extractTools(entry.Message.Content)
-					info.ToolCount += len(tools)
-					if len(tools) > 0 {
-						info.ToolEvents = append(info.ToolEvents, model.SubAgentToolEvent{
-							Timestamp: ts,
-							Tools:     tools,
-						})
+					toolUses := extractTools(entry.Message.Content)
+					info.ToolCount += len(toolUses)
+					if len(toolUses) > 0 {
+						names, details := splitToolUses(toolUses)
+						evt := model.SubAgentToolEvent{
+							Timestamp:   ts,
+							Tools:       names,
+							ToolDetails: details,
+						}
+						info.ToolEvents = append(info.ToolEvents, evt)
 					}
 				}
 			}
@@ -161,8 +164,9 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 	defer f.Close()
 
 	summary := &model.SessionSummary{
-		Models: make(map[string]int),
-		Tools:  make(map[string]int),
+		Models:      make(map[string]int),
+		Tools:       make(map[string]int),
+		ToolDetails: make(map[string][]string),
 	}
 	timeline := &model.SessionTimeline{}
 	scanner := newScanner(f)
@@ -218,9 +222,14 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 				summary.Tokens.CacheCreation += u.CacheCreation
 				summary.Tokens.CacheRead += u.CacheRead
 			}
-			tools := extractTools(msg.Content)
-			for _, t := range tools {
-				summary.Tools[t]++
+			toolUses := extractTools(msg.Content)
+			tools := make([]string, len(toolUses))
+			for i, tu := range toolUses {
+				tools[i] = tu.Name
+				summary.Tools[tu.Name]++
+				if tu.Detail != "" && len(summary.ToolDetails[tu.Name]) < maxToolDetailsPerKey {
+					summary.ToolDetails[tu.Name] = append(summary.ToolDetails[tu.Name], tu.Detail)
+				}
 			}
 			te := model.TimelineEntry{
 				Timestamp: ts,
@@ -303,12 +312,38 @@ func ParseProject(projectDir string) ([]*model.SessionSummary, error) {
 	return summaries, nil
 }
 
-func extractTools(content any) []string {
+// toolUse はツール使用の名前と詳細を保持する
+type toolUse struct {
+	Name   string // "Bash:grep", "Read", "Agent:general-purpose" 等
+	Detail string // description or truncated command（Bash のみ、他は空）
+}
+
+// splitToolUses は []toolUse を名前スライスと詳細スライスに分離する。
+// 詳細が1つもなければ details は nil を返す。
+func splitToolUses(tus []toolUse) (names []string, details []string) {
+	names = make([]string, len(tus))
+	hasDetails := false
+	for i, tu := range tus {
+		names[i] = tu.Name
+		if tu.Detail != "" {
+			hasDetails = true
+		}
+	}
+	if hasDetails {
+		details = make([]string, len(tus))
+		for i, tu := range tus {
+			details[i] = tu.Detail
+		}
+	}
+	return
+}
+
+func extractTools(content any) []toolUse {
 	blocks, ok := content.([]any)
 	if !ok {
 		return nil
 	}
-	var tools []string
+	var tools []toolUse
 	for _, b := range blocks {
 		block, ok := b.(map[string]any)
 		if !ok {
@@ -319,6 +354,7 @@ func extractTools(content any) []string {
 		}
 		name, _ := block["name"].(string)
 		input, _ := block["input"].(map[string]any)
+		var detail string
 		switch name {
 		case "Agent":
 			if input != nil {
@@ -334,6 +370,11 @@ func extractTools(content any) []string {
 					if fields := strings.Fields(cmd); len(fields) > 0 {
 						name = "Bash:" + filepath.Base(fields[0])
 					}
+					if desc, ok := input["description"].(string); ok && desc != "" {
+						detail = truncate(desc, 80)
+					} else {
+						detail = truncate(cmd, 80)
+					}
 				}
 			}
 		case "Skill":
@@ -344,12 +385,13 @@ func extractTools(content any) []string {
 			}
 		}
 		if name != "" {
-			tools = append(tools, name)
+			tools = append(tools, toolUse{Name: name, Detail: detail})
 		}
 	}
 	return tools
 }
 
+const maxToolDetailsPerKey = 200
 const maxPromptTextLen = 120
 
 func extractUserContent(content any) (textLen int, isToolResult bool, promptText string) {
@@ -357,7 +399,7 @@ func extractUserContent(content any) (textLen int, isToolResult bool, promptText
 	case string:
 		return len(v), false, truncate(v, maxPromptTextLen)
 	case []any:
-		var fullText string
+		var fullText strings.Builder
 		for _, b := range v {
 			block, ok := b.(map[string]any)
 			if !ok {
@@ -369,11 +411,11 @@ func extractUserContent(content any) (textLen int, isToolResult bool, promptText
 			case "text":
 				if text, ok := block["text"].(string); ok {
 					textLen += len(text)
-					fullText += text
+					fullText.WriteString(text)
 				}
 			}
 		}
-		promptText = truncate(fullText, maxPromptTextLen)
+		promptText = truncate(fullText.String(), maxPromptTextLen)
 	}
 	return
 }

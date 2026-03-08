@@ -13,7 +13,8 @@ type SessionSummary struct {
 	EndTime            time.Time      `json:"endTime"`
 	Models             map[string]int `json:"models"`
 	Tokens             TokenUsage     `json:"tokens"`
-	Tools              map[string]int `json:"tools"`
+	Tools              map[string]int      `json:"tools"`
+	ToolDetails        map[string][]string `json:"toolDetails,omitempty"`
 	UserPromptCount    int            `json:"userPromptCount"`
 	AssistantTurnCount int            `json:"assistantTurnCount"`
 }
@@ -46,8 +47,9 @@ type SubAgentInfo struct {
 
 // SubAgentToolEvent はサブエージェント内の1アシスタントターンのツール使用
 type SubAgentToolEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-	Tools     []string  `json:"tools"`
+	Timestamp   time.Time `json:"timestamp"`
+	Tools       []string  `json:"tools"`
+	ToolDetails []string  `json:"toolDetails,omitempty"`
 }
 
 // TimelineEntry は1つの時系列エントリ
