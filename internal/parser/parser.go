@@ -324,6 +324,8 @@ func extractTools(content any) []string {
 			if input != nil {
 				if st, ok := input["subagent_type"].(string); ok && st != "" {
 					name = "Agent:" + st
+				} else {
+					name = "Agent:(not specified)"
 				}
 			}
 		case "Bash":
