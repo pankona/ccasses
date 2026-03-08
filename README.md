@@ -63,12 +63,33 @@ go build ./cmd/ccasses/
 
 ## 使い方
 
-### Web UI を起動する
+### 1. インストール（未実施の場合）
+
+```bash
+go install github.com/pankona/ccasses/cmd/ccasses@latest
+```
+
+または手元でビルドする場合:
+
+```bash
+git clone https://github.com/pankona/ccasses.git
+cd ccasses
+go build ./cmd/ccasses/
+```
+
+`go install` を使った場合は `$GOPATH/bin`（デフォルト: `~/go/bin`）に `ccasses` バイナリが生成されます。`$PATH` に含まれていない場合は追加してください。
+
+```bash
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+### 2. Web UI を起動する
 
 ```bash
 ccasses serve
-# → http://localhost:8080 でブラウザを開く
 ```
+
+起動後、ブラウザで http://localhost:8080 を開くとセッション一覧が表示されます。
 
 ポートを変更する場合:
 
@@ -76,7 +97,14 @@ ccasses serve
 ccasses serve --port 9090
 ```
 
-Claude Code のセッションデータは `~/.claude/projects/` から自動的に読み込まれます。
+Claude Code のセッションデータは `~/.claude/projects/` から自動的に読み込まれます。特別な設定は不要です。
+
+### 3. セッションを閲覧する
+
+- トップページに全セッションの一覧が表示されます
+- セッションをクリックすると詳細画面に遷移します
+- 詳細画面の「Timeline」グラフでコンテキスト使用率の推移や SubAgent の活動を確認できます
+- グラフ上でホイールスクロールでズーム、ドラッグでパンできます
 
 ### JSON を標準出力に出力する
 
@@ -84,7 +112,15 @@ Claude Code のセッションデータは `~/.claude/projects/` から自動的
 ccasses generate
 ```
 
-全セッションのサマリーを JSON として出力します。他のツールへのパイプに使えます。
+全セッションのサマリーを JSON として標準出力に出力します。他のツールへのパイプや独自集計に利用できます。
+
+```bash
+# セッション数を確認する例
+ccasses generate | jq 'length'
+
+# 特定プロジェクトのセッションだけ抽出する例
+ccasses generate | jq '[.[] | select(.project == "your/project")]'
+```
 
 ## データソース
 
