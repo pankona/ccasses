@@ -20,31 +20,6 @@
 
 ![Sessions](docs/sessions.png)
 
-### セッション詳細
-
-選択したセッションのトークン数・ターン数などの統計、ツール使用内訳、モデル使用率を表示します。
-
-![Detail](docs/detail.png)
-
-### コンテキストサイズ タイムライン
-
-コンテキストウィンドウの fill% を時系列で表示します。ズーム・スクロール対応。
-
-- **緑の線**: Context fill %（80%以上で赤、60%以上でオレンジに変化）
-- **モデルバンド**: opus/sonnet/haiku ごとに背景色で区別
-- **赤い三角**: ユーザープロンプト（ホバーでテキスト表示）
-- **赤いひし形**: Compaction（fill% が大幅低下）
-- **灰色の×**: Cache Reset（キャッシュ無効化・モデル切り替え等）
-- **色付きドット**: ツール使用イベント（Bash=青、Edit/Write=オレンジ、Read/Glob/Grep=緑など）
-- **星マーカー + 下部バンド**: SubAgent の起動と実行期間
-- **空洞の丸**: SubAgent 内のツール使用イベント
-
-![Timeline](docs/timeline.png)
-
-SubAgent がズームで確認できます。14:23 付近の空洞丸クラスターが SubAgent（コードレビューエージェント）のツール使用で、下部のバンドが実行期間を示しています。
-
-![Timeline SubAgent](docs/timeline_subagent.png)
-
 ## インストール
 
 Go 1.21 以上が必要です。
