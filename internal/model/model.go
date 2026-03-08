@@ -63,20 +63,21 @@ type TimelineEntry struct {
 
 // RawEntry は JSONL の1エントリ（パース用）
 type RawEntry struct {
-	ParentUUID    string     `json:"parentUuid"`
-	IsSidechain   bool       `json:"isSidechain"`
-	UserType      string     `json:"userType"`
-	Cwd           string     `json:"cwd"`
-	SessionID     string     `json:"sessionId"`
-	Version       string     `json:"version"`
-	GitBranch     string     `json:"gitBranch"`
-	Slug          string     `json:"slug"`
-	Type          string     `json:"type"`
-	Message       *RawMessage `json:"message"`
-	Timestamp     string     `json:"timestamp"`
-	UUID          string     `json:"uuid"`
-	PermissionMode string    `json:"permissionMode"`
-	DurationMs    *int       `json:"durationMs"`
+	ParentUUID      string      `json:"parentUuid"`
+	IsSidechain     bool        `json:"isSidechain"`
+	UserType        string      `json:"userType"`
+	Cwd             string      `json:"cwd"`
+	SessionID       string      `json:"sessionId"`
+	Version         string      `json:"version"`
+	GitBranch       string      `json:"gitBranch"`
+	Slug            string      `json:"slug"`
+	Type            string      `json:"type"`
+	Message         *RawMessage `json:"message"`
+	Timestamp       string      `json:"timestamp"`
+	UUID            string      `json:"uuid"`
+	PermissionMode  string      `json:"permissionMode"`
+	DurationMs      *int        `json:"durationMs"`
+	ParentToolUseID string      `json:"parentToolUseID"`
 }
 
 // RawMessage は message フィールドの内容
@@ -96,6 +97,16 @@ type RawUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
+}
+
+// ToTokenUsage は RawUsage を TokenUsage に変換する
+func (u *RawUsage) ToTokenUsage() TokenUsage {
+	return TokenUsage{
+		Input:         u.InputTokens,
+		Output:        u.OutputTokens,
+		CacheCreation: u.CacheCreationInputTokens,
+		CacheRead:     u.CacheReadInputTokens,
+	}
 }
 
 // RawContentBlock は content 配列の1要素

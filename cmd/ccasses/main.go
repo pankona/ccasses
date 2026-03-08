@@ -13,6 +13,14 @@ import (
 	"github.com/pankona/ccasses/internal/server"
 )
 
+func claudeProjectsDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home dir: %w", err)
+	}
+	return filepath.Join(homeDir, ".claude", "projects"), nil
+}
+
 //go:embed all:web
 var webFiles embed.FS
 
@@ -56,36 +64,17 @@ func printUsage() {
 }
 
 func runGenerate() error {
-	homeDir, err := os.UserHomeDir()
+	projectsDir, err := claudeProjectsDir()
 	if err != nil {
-		return fmt.Errorf("get home dir: %w", err)
+		return err
 	}
-
-	projectsDir := filepath.Join(homeDir, ".claude", "projects")
-	entries, err := os.ReadDir(projectsDir)
+	summaries, err := parser.ParseAllProjects(projectsDir)
 	if err != nil {
-		return fmt.Errorf("read projects dir: %w", err)
+		return fmt.Errorf("parse projects: %w", err)
 	}
-
-	var allSummaries []any
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		projectDir := filepath.Join(projectsDir, e.Name())
-		summaries, err := parser.ParseProject(projectDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warn: skip %s: %v\n", e.Name(), err)
-			continue
-		}
-		for _, s := range summaries {
-			allSummaries = append(allSummaries, s)
-		}
-	}
-
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(allSummaries)
+	return enc.Encode(summaries)
 }
 
 func runServe(port int) error {

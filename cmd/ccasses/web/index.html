@@ -178,11 +178,7 @@
       if (name.includes('haiku')) cls += ' haiku';
       else if (name.includes('sonnet')) cls += ' sonnet';
       else if (name.includes('opus')) cls += ' opus';
-      const short = name.replace('claude-','').replace(/-\d{8}$/, '').replace(/-20\d+$/, '');
-      return `<span class="${cls}">${short}</span>`;
-    }
-    function topN(obj, n) {
-      return Object.entries(obj).sort((a,b) => b[1]-a[1]).slice(0, n);
+      return `<span class="${cls}">${modelShortName(name)}</span>`;
     }
 
     // ---- Load sessions ----
@@ -616,15 +612,9 @@
         const point = ds.data[el.index];
         let lines = [];
         if (ds.label === 'user prompt') {
-          const d = new Date(point.ts);
-          const timeStr = String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0')
-            + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-          lines = [timeStr, 'User prompt:', point.promptText || '(no text)'];
+          lines = [fmtTime(point.ts), 'User prompt:', point.promptText || '(no text)'];
         } else if (ds.label === 'tool events') {
-          const d = new Date(point.ts);
-          const timeStr = String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0')
-            + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-          lines = [timeStr, 'Model: ' + modelShortName(point.model),
+          lines = [fmtTime(point.ts), 'Model: ' + modelShortName(point.model),
             'fill: ' + (point.fill ?? 0).toFixed(1) + '%',
             'Tools: ' + (point.tools || []).join(', ')];
         } else if (ds.label === 'cache reset') {
@@ -635,11 +625,8 @@
             'Before: ' + (point.prevFill ?? 0).toFixed(1) + '%',
             'After:  ' + (point.y ?? 0).toFixed(1) + '%'];
         } else if (ds.label === 'subagent tools') {
-          const d = new Date(point.ts);
-          const timeStr = String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0')
-            + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
           lines = [
-            timeStr + ' [SubAgent: ' + (point.agentType || 'general-purpose') + ']',
+            fmtTime(point.ts) + ' [SubAgent: ' + (point.agentType || 'general-purpose') + ']',
             'Tools: ' + (point.tools || []).join(', '),
           ];
         } else if (ds.label === 'subagent') {
@@ -740,24 +727,6 @@
     }
 
     // ---- Chart helpers ----
-    function renderBarChart(id, entries, oldChart, setter) {
-      if (oldChart) oldChart.destroy();
-      const ctx = document.getElementById(id).getContext('2d');
-      setter(new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: entries.map(([k]) => k),
-          datasets: [{ data: entries.map(([,v]) => v), backgroundColor: COLORS }]
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          plugins: { legend: { display: false } },
-          scales: { x: { beginAtZero: true } }
-        }
-      }));
-    }
-
     function renderPieChart(id, entries, oldChart, setter) {
       if (oldChart) oldChart.destroy();
       const ctx = document.getElementById(id).getContext('2d');

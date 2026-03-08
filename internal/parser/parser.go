@@ -12,12 +12,46 @@ import (
 	"github.com/pankona/ccasses/internal/model"
 )
 
+const scanBufSize = 1024 * 1024 // 1MB
+
+func newScanner(f *os.File) *bufio.Scanner {
+	s := bufio.NewScanner(f)
+	s.Buffer(make([]byte, scanBufSize), scanBufSize)
+	return s
+}
+
+func updateTimeRange(start, end *time.Time, ts time.Time) {
+	if start.IsZero() || ts.Before(*start) {
+		*start = ts
+	}
+	if end.IsZero() || ts.After(*end) {
+		*end = ts
+	}
+}
+
+// ParseAllProjects は dataDir 以下の全プロジェクトの全セッションをパースして返す
+func ParseAllProjects(dataDir string) ([]*model.SessionSummary, error) {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("readdir %s: %w", dataDir, err)
+	}
+	var all []*model.SessionSummary
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		summaries, err := ParseProject(filepath.Join(dataDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		all = append(all, summaries...)
+	}
+	return all, nil
+}
+
 // ParseSubAgents はセッションのサブエージェント情報を返す
-// jsonlPath: 親セッションの JSONL ファイルパス
 func ParseSubAgents(jsonlPath string) ([]model.SubAgentInfo, error) {
-	// サブエージェントディレクトリ: <session-id>/subagents/
-	sessionDir := strings.TrimSuffix(jsonlPath, ".jsonl")
-	subagentsDir := filepath.Join(sessionDir, "subagents")
+	subagentsDir := filepath.Join(strings.TrimSuffix(jsonlPath, ".jsonl"), "subagents")
 
 	entries, err := os.ReadDir(subagentsDir)
 	if err != nil {
@@ -30,16 +64,15 @@ func ParseSubAgents(jsonlPath string) ([]model.SubAgentInfo, error) {
 	var result []model.SubAgentInfo
 	for _, e := range entries {
 		name := e.Name()
-		// agent-<hash>.jsonl のみ処理（compactファイルは除外）
 		if !strings.HasSuffix(name, ".jsonl") || strings.Contains(name, "compact") {
 			continue
 		}
 		agentPath := filepath.Join(subagentsDir, name)
 		info, err := parseSubAgentFile(agentPath)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "warn: skip subagent %s: %v\n", name, err)
 			continue
 		}
-		// meta.json からエージェントタイプを取得
 		metaPath := strings.TrimSuffix(agentPath, ".jsonl") + ".meta.json"
 		if agentType := readAgentType(metaPath); agentType != "" {
 			info.AgentType = agentType
@@ -49,7 +82,6 @@ func ParseSubAgents(jsonlPath string) ([]model.SubAgentInfo, error) {
 	return result, nil
 }
 
-// parseSubAgentFile はサブエージェントの JSONL ファイルをパースして SubAgentInfo を返す
 func parseSubAgentFile(path string) (model.SubAgentInfo, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -58,82 +90,54 @@ func parseSubAgentFile(path string) (model.SubAgentInfo, error) {
 	defer f.Close()
 
 	var info model.SubAgentInfo
-	var toolCount int
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner := newScanner(f)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			continue
 		}
+		lineBytes := []byte(line)
 		var entry model.RawEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(lineBytes, &entry); err != nil {
 			continue
 		}
 
-		// parentToolUseID を取得（最初のエントリから）
-		if info.ToolUseID == "" {
-			// parentToolUseID フィールドを直接読み込む
-			var raw map[string]any
-			if json.Unmarshal([]byte(line), &raw) == nil {
-				if pid, ok := raw["parentToolUseID"].(string); ok && pid != "" {
-					info.ToolUseID = pid
-				}
-			}
+		if info.ToolUseID == "" && entry.ParentToolUseID != "" {
+			info.ToolUseID = entry.ParentToolUseID
 		}
 
-		// タイムスタンプの追跡
 		if entry.Timestamp != "" {
-			ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
-			if err == nil {
-				if info.StartTime.IsZero() || ts.Before(info.StartTime) {
-					info.StartTime = ts
-				}
-				if info.EndTime.IsZero() || ts.After(info.EndTime) {
-					info.EndTime = ts
+			if ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
+				updateTimeRange(&info.StartTime, &info.EndTime, ts)
+
+				if entry.Type == "assistant" && entry.Message != nil {
+					tools := extractTools(entry.Message.Content)
+					info.ToolCount += len(tools)
+					if len(tools) > 0 {
+						info.ToolEvents = append(info.ToolEvents, model.SubAgentToolEvent{
+							Timestamp: ts,
+							Tools:     tools,
+						})
+					}
 				}
 			}
 		}
 
-		if entry.Message == nil {
-			continue
-		}
-		msg := entry.Message
-
-		switch entry.Type {
-		case "user":
-			// 最初のユーザーメッセージからプロンプトを取得
-			if info.Prompt == "" {
-				_, isToolResult, promptText := extractUserContent(msg.Content)
-				if !isToolResult && promptText != "" {
-					info.Prompt = promptText
-				}
-			}
-		case "assistant":
-			// ツール使用数をカウント、ToolEventsに記録
-			tools := extractTools(msg.Content)
-			toolCount += len(tools)
-			if len(tools) > 0 {
-				ts, _ := time.Parse(time.RFC3339Nano, entry.Timestamp)
-				if !ts.IsZero() {
-					info.ToolEvents = append(info.ToolEvents, model.SubAgentToolEvent{
-						Timestamp: ts,
-						Tools:     tools,
-					})
-				}
+		if entry.Type == "user" && entry.Message != nil && info.Prompt == "" {
+			_, isToolResult, promptText := extractUserContent(entry.Message.Content)
+			if !isToolResult && promptText != "" {
+				info.Prompt = promptText
 			}
 		}
 	}
 
-	info.ToolCount = toolCount
-	if scanner.Err() != nil {
-		return model.SubAgentInfo{}, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return model.SubAgentInfo{}, err
 	}
 	return info, nil
 }
 
-// readAgentType は meta.json からエージェントタイプを読み込む
 func readAgentType(metaPath string) string {
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
@@ -161,9 +165,7 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 		Tools:  make(map[string]int),
 	}
 	timeline := &model.SessionTimeline{}
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+	scanner := newScanner(f)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -173,10 +175,9 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 
 		var entry model.RawEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue // パースできない行はスキップ
+			continue
 		}
 
-		// セッションメタ情報（最初のエントリから取得）
 		if summary.SessionID == "" && entry.SessionID != "" {
 			summary.SessionID = entry.SessionID
 			timeline.SessionID = entry.SessionID
@@ -191,16 +192,9 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 			summary.Version = entry.Version
 		}
 
-		// タイムスタンプの追跡
 		if entry.Timestamp != "" {
-			ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
-			if err == nil {
-				if summary.StartTime.IsZero() || ts.Before(summary.StartTime) {
-					summary.StartTime = ts
-				}
-				if summary.EndTime.IsZero() || ts.After(summary.EndTime) {
-					summary.EndTime = ts
-				}
+			if ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
+				updateTimeRange(&summary.StartTime, &summary.EndTime, ts)
 			}
 		}
 
@@ -214,24 +208,20 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 		switch entry.Type {
 		case "assistant":
 			summary.AssistantTurnCount++
-
 			if msg.Model != "" {
 				summary.Models[msg.Model]++
 			}
-
 			if msg.Usage != nil {
-				summary.Tokens.Input += msg.Usage.InputTokens
-				summary.Tokens.Output += msg.Usage.OutputTokens
-				summary.Tokens.CacheCreation += msg.Usage.CacheCreationInputTokens
-				summary.Tokens.CacheRead += msg.Usage.CacheReadInputTokens
+				u := msg.Usage.ToTokenUsage()
+				summary.Tokens.Input += u.Input
+				summary.Tokens.Output += u.Output
+				summary.Tokens.CacheCreation += u.CacheCreation
+				summary.Tokens.CacheRead += u.CacheRead
 			}
-
-			// content からツール使用を抽出
 			tools := extractTools(msg.Content)
 			for _, t := range tools {
 				summary.Tools[t]++
 			}
-
 			te := model.TimelineEntry{
 				Timestamp: ts,
 				Type:      "assistant",
@@ -239,12 +229,8 @@ func ParseSession(jsonlPath string) (*model.SessionSummary, *model.SessionTimeli
 				Tools:     tools,
 			}
 			if msg.Usage != nil {
-				te.Tokens = &model.TokenUsage{
-					Input:         msg.Usage.InputTokens,
-					Output:        msg.Usage.OutputTokens,
-					CacheCreation: msg.Usage.CacheCreationInputTokens,
-					CacheRead:     msg.Usage.CacheReadInputTokens,
-				}
+				u := msg.Usage.ToTokenUsage()
+				te.Tokens = &u
 			}
 			timeline.Timeline = append(timeline.Timeline, te)
 
@@ -298,7 +284,6 @@ func ParseProject(projectDir string) ([]*model.SessionSummary, error) {
 	}
 
 	projectName := filepath.Base(projectDir)
-	// ディレクトリ名のプレフィックス "-home-pankona-..." を人間が読みやすい形式に変換
 	if strings.HasPrefix(projectName, "-") {
 		projectName = strings.ReplaceAll(projectName[1:], "-", "/")
 	}
@@ -308,8 +293,7 @@ func ParseProject(projectDir string) ([]*model.SessionSummary, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		path := filepath.Join(projectDir, e.Name())
-		summary, _, err := ParseSession(path)
+		summary, _, err := ParseSession(filepath.Join(projectDir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -319,51 +303,46 @@ func ParseProject(projectDir string) ([]*model.SessionSummary, error) {
 	return summaries, nil
 }
 
-// extractTools は content から tool_use ブロックのツール名一覧を返す
 func extractTools(content any) []string {
-	if content == nil {
-		return nil
-	}
 	blocks, ok := content.([]any)
 	if !ok {
 		return nil
 	}
-
 	var tools []string
 	for _, b := range blocks {
 		block, ok := b.(map[string]any)
 		if !ok {
 			continue
 		}
-		if block["type"] == "tool_use" {
-			name, _ := block["name"].(string)
-			input, _ := block["input"].(map[string]any)
-			switch name {
-			case "Agent":
-				if input != nil {
-					if st, ok := input["subagent_type"].(string); ok && st != "" {
-						name = "Agent:" + st
-					}
+		if block["type"] != "tool_use" {
+			continue
+		}
+		name, _ := block["name"].(string)
+		input, _ := block["input"].(map[string]any)
+		switch name {
+		case "Agent":
+			if input != nil {
+				if st, ok := input["subagent_type"].(string); ok && st != "" {
+					name = "Agent:" + st
 				}
-			case "Bash":
-				if input != nil {
-					if cmd, ok := input["command"].(string); ok && cmd != "" {
-						fields := strings.Fields(cmd)
-						if len(fields) > 0 {
-							name = "Bash:" + filepath.Base(fields[0])
-						}
-					}
-				}
-			case "Skill":
-				if input != nil {
-					if skill, ok := input["skill"].(string); ok && skill != "" {
-						name = "Skill:" + skill
+			}
+		case "Bash":
+			if input != nil {
+				if cmd, ok := input["command"].(string); ok && cmd != "" {
+					if fields := strings.Fields(cmd); len(fields) > 0 {
+						name = "Bash:" + filepath.Base(fields[0])
 					}
 				}
 			}
-			if name != "" {
-				tools = append(tools, name)
+		case "Skill":
+			if input != nil {
+				if skill, ok := input["skill"].(string); ok && skill != "" {
+					name = "Skill:" + skill
+				}
 			}
+		}
+		if name != "" {
+			tools = append(tools, name)
 		}
 	}
 	return tools
@@ -371,7 +350,6 @@ func extractTools(content any) []string {
 
 const maxPromptTextLen = 120
 
-// extractUserContent はユーザーメッセージのテキスト長、tool_resultかどうか、冒頭テキストを返す
 func extractUserContent(content any) (textLen int, isToolResult bool, promptText string) {
 	switch v := content.(type) {
 	case string:

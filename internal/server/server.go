@@ -12,6 +12,7 @@ import (
 	"github.com/pankona/ccasses/internal/parser"
 )
 
+
 // Server は HTTP サーバー
 type Server struct {
 	port    int
@@ -82,27 +83,11 @@ func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
 
 // handleSessions は全セッションのサマリーを返す
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir(s.dataDir)
+	summaries, err := parser.ParseAllProjects(s.dataDir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	var allSummaries []any
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		projectDir := filepath.Join(s.dataDir, e.Name())
-		summaries, err := parser.ParseProject(projectDir)
-		if err != nil {
-			continue
-		}
-		for _, summary := range summaries {
-			allSummaries = append(allSummaries, summary)
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(allSummaries)
+	json.NewEncoder(w).Encode(summaries)
 }
