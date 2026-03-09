@@ -45,26 +45,28 @@ func TestMain(m *testing.M) {
 func waitForServer(url string, timeout time.Duration) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return false
-		default:
+		case <-tick.C:
 			resp, err := http.Get(url) //nolint:gosec
 			if err == nil && resp.StatusCode == 200 {
 				resp.Body.Close()
 				return true
 			}
-			time.Sleep(200 * time.Millisecond)
 		}
 	}
 }
 
-// newPage はトップページを開いてローディングが終わるまで待つ。
+// newPage はトップページを開いてセッション一覧が表示されるまで待つ。
 func newPage(t *testing.T) *rod.Page {
 	t.Helper()
 	page := browser.MustPage(baseURL)
 	page.MustElement("#loading").MustWaitInvisible()
+	page.MustElement("#view-sessions").MustWaitVisible()
 	return page
 }
 
@@ -72,7 +74,6 @@ func newPage(t *testing.T) *rod.Page {
 func navigateToDetail(t *testing.T) *rod.Page {
 	t.Helper()
 	page := newPage(t)
-	page.MustElement("#view-sessions").MustWaitVisible()
 	page.MustElement("#sessions-tbody tr").MustClick()
 	page.MustElement("#view-detail").MustWaitVisible()
 	return page
@@ -82,8 +83,6 @@ func navigateToDetail(t *testing.T) *rod.Page {
 func TestTopPageInitialDisplay(t *testing.T) {
 	page := newPage(t)
 	defer page.MustClose()
-
-	page.MustElement("#view-sessions").MustWaitVisible()
 
 	// ヘッダー
 	h1 := page.MustElement("header h1").MustText()
@@ -113,8 +112,6 @@ func TestChartDisplay(t *testing.T) {
 	page := newPage(t)
 	defer page.MustClose()
 
-	page.MustElement("#view-sessions").MustWaitVisible()
-
 	// Tool Usage セクション（子要素あり）
 	children := page.MustElements("#chart-tools *")
 	if len(children) == 0 {
@@ -129,8 +126,6 @@ func TestChartDisplay(t *testing.T) {
 func TestSessionTable(t *testing.T) {
 	page := newPage(t)
 	defer page.MustClose()
-
-	page.MustElement("#view-sessions").MustWaitVisible()
 
 	// ヘッダー列確認
 	wantHeaders := []string{"ID", "Project", "Branch", "Start", "Duration", "Turns", "Output Tokens", "Cache Read", "Models"}
@@ -216,20 +211,17 @@ func TestToolTreeExpandCollapse(t *testing.T) {
 	page := newPage(t)
 	defer page.MustClose()
 
-	page.MustElement("#view-sessions").MustWaitVisible()
-
-	// 展開前の状態: t-children は非表示
-	initialDisplay, err := page.Eval(`() => {
+	// expandable な行の存在確認
+	result, err := page.Eval(`() => {
 		const row = document.querySelector('#chart-tools .t-row.expandable');
 		if (!row) return null;
-		const li = row.parentElement;
-		const ul = li.querySelector('.t-children');
+		const ul = row.parentElement.querySelector('.t-children');
 		return ul ? ul.style.display : null;
 	}`)
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	if initialDisplay.Value.Nil() {
+	if result.Value.Nil() {
 		t.Skip("no expandable row found in #chart-tools")
 	}
 
@@ -237,17 +229,15 @@ func TestToolTreeExpandCollapse(t *testing.T) {
 	toggle := page.MustElement("#chart-tools .t-row.expandable .t-toggle")
 	before := toggle.MustText()
 
-	// クリックして展開
+	// クリックして展開 → t-children 表示とトグルテキスト変化を確認
 	page.MustElement("#chart-tools .t-row.expandable").MustClick()
 
-	// トグルテキストが変わる
 	after := toggle.MustText()
 	if after == before {
 		t.Error("toggle text did not change after expand")
 	}
 
-	// t-children が表示される
-	expanded, err := page.Eval(`() => {
+	display, err := page.Eval(`() => {
 		const row = document.querySelector('#chart-tools .t-row.expandable');
 		const ul = row.parentElement.querySelector('.t-children');
 		return ul ? ul.style.display : null;
@@ -255,15 +245,14 @@ func TestToolTreeExpandCollapse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	if expanded.Value.String() != "block" {
-		t.Errorf("t-children display = %q, want %q", expanded.Value.String(), "block")
+	if display.Value.String() != "block" {
+		t.Errorf("t-children display after expand = %q, want %q", display.Value.String(), "block")
 	}
 
 	// 再クリックで折りたたむ
 	page.MustElement("#chart-tools .t-row.expandable").MustClick()
-	collapsed := toggle.MustText()
-	if collapsed != before {
-		t.Errorf("toggle text after collapse = %q, want %q", collapsed, before)
+	if toggle.MustText() != before {
+		t.Errorf("toggle text after collapse = %q, want %q", toggle.MustText(), before)
 	}
 }
 
@@ -282,8 +271,7 @@ func TestHashRouting(t *testing.T) {
 	}
 
 	// ハッシュ付き URL に直接アクセス
-	directURL := baseURL + "/" + hashStr
-	page2 := browser.MustPage(directURL)
+	page2 := browser.MustPage(baseURL + "/" + hashStr)
 	defer page2.MustClose()
 	page2.MustElement("#loading").MustWaitInvisible()
 	page2.MustElement("#view-detail").MustWaitVisible()
@@ -294,59 +282,26 @@ func TestAgentToolDetails(t *testing.T) {
 	page := newPage(t)
 	defer page.MustClose()
 
-	page.MustElement("#view-sessions").MustWaitVisible()
-
-	// "Agent" の expandable 行を探す
-	found, err := page.Eval(`() => {
-		const rows = document.querySelectorAll('#chart-tools .t-row.expandable');
-		for (const row of rows) {
-			const name = row.querySelector('.t-name');
-			if (name && name.textContent.trim() === 'Agent') return true;
-		}
-		return false;
-	}`)
-	if err != nil {
-		t.Fatalf("eval error: %v", err)
-	}
-	if !found.Value.Bool() {
-		t.Skip("Agent tool not found in tool usage (no Agent calls in data)")
-	}
-
-	// Agent 行をクリック
-	agentRow, err := page.Eval(`() => {
+	// Agent 行を探してクリックし、子項目数を返す（1回の eval で完結）
+	result, err := page.Eval(`() => {
 		const rows = document.querySelectorAll('#chart-tools .t-row.expandable');
 		for (const row of rows) {
 			const name = row.querySelector('.t-name');
 			if (name && name.textContent.trim() === 'Agent') {
 				row.click();
-				return true;
-			}
-		}
-		return false;
-	}`)
-	if err != nil {
-		t.Fatalf("eval error: %v", err)
-	}
-	if !agentRow.Value.Bool() {
-		t.Skip("Agent tool not found")
-	}
-
-	// 子項目が展開される
-	childCount, err := page.Eval(`() => {
-		const rows = document.querySelectorAll('#chart-tools .t-row.expandable');
-		for (const row of rows) {
-			const name = row.querySelector('.t-name');
-			if (name && name.textContent.trim() === 'Agent') {
 				const ul = row.parentElement.querySelector('.t-children');
-				return ul ? ul.querySelectorAll('li').length : 0;
+				return { found: true, childCount: ul ? ul.querySelectorAll('li').length : 0 };
 			}
 		}
-		return 0;
+		return { found: false, childCount: 0 };
 	}`)
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	if childCount.Value.Int() == 0 {
+	if !result.Value.Get("found").Bool() {
+		t.Skip("Agent tool not found in tool usage (no Agent calls in data)")
+	}
+	if result.Value.Get("childCount").Int() == 0 {
 		t.Error("Agent children not expanded or empty")
 	}
 }
@@ -356,27 +311,24 @@ func TestSubAgentTimeline(t *testing.T) {
 	page := navigateToDetail(t)
 	defer page.MustClose()
 
-	// Timeline canvas が存在する
+	// Timeline canvas が存在し Chart.js インスタンスが初期化されるまで待つ
+	// (showDetail は #view-detail 表示後に非同期フェッチしてチャートを初期化する)
 	page.MustElement("#detail-chart-timeline")
 
-	// Chart.js インスタンスが初期化されている
-	result, err := page.Eval(`() => {
-		return typeof detailChartTimeline !== 'undefined' && detailChartTimeline !== null;
+	result, err := page.Eval(`async () => {
+		for (let i = 0; i < 50; i++) {
+			if (detailChartTimeline) {
+				return { ok: true, datasets: detailChartTimeline.data.datasets.map(d => d.label || '') };
+			}
+			await new Promise(r => setTimeout(r, 100));
+		}
+		return { ok: false, datasets: [] };
 	}`)
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	if !result.Value.Bool() {
-		t.Error("detailChartTimeline is not initialized")
+	if !result.Value.Get("ok").Bool() {
+		t.Error("detailChartTimeline did not initialize within 5s")
 	}
-
-	// データセット一覧を取得（subagent がいる場合はラベルを確認）
-	datasets, err := page.Eval(`() => {
-		if (!detailChartTimeline) return [];
-		return detailChartTimeline.data.datasets.map(d => d.label || '');
-	}`)
-	if err != nil {
-		t.Fatalf("eval error: %v", err)
-	}
-	t.Logf("timeline datasets: %s", datasets.Value.Raw())
+	t.Logf("timeline datasets: %s", result.Value.Get("datasets").Raw())
 }
