@@ -363,6 +363,9 @@ func extractTools(content any) []toolUse {
 				} else {
 					name = "Agent:(not specified)"
 				}
+				if desc, ok := input["description"].(string); ok && desc != "" {
+					detail = truncate(desc, 80)
+				}
 			}
 		case "Bash":
 			if input != nil {
