@@ -43,6 +43,7 @@ type SubAgentInfo struct {
 	ToolCount  int                 `json:"toolCount"`
 	Prompt     string              `json:"prompt"` // 最初のユーザープロンプト（冒頭120文字）
 	ToolEvents []SubAgentToolEvent `json:"toolEvents,omitempty"`
+	Timeline   []TimelineEntry     `json:"timeline,omitempty"`
 }
 
 // SubAgentToolEvent はサブエージェント内の1アシスタントターンのツール使用

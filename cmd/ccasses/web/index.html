@@ -316,8 +316,15 @@
       if (e.state && e.state.sessionId) {
         showDetail(e.state.sessionId, false);
       } else {
-        document.getElementById('view-detail').style.display = 'none';
-        document.getElementById('view-sessions').style.display = '';
+        // ハッシュにセッションIDがあればそちらを優先
+        const hash = location.hash;
+        const m = hash.match(/^#session\/(.+)$/);
+        if (m) {
+          showDetail(m[1], false);
+        } else {
+          document.getElementById('view-detail').style.display = 'none';
+          document.getElementById('view-sessions').style.display = '';
+        }
       }
     });
 
@@ -469,6 +476,35 @@
         });
       });
 
+      // SubAgent fill% 線グラフデータセットを構築
+      const subAgentFillDatasets = [];
+      (subAgents || []).forEach((sa, idx) => {
+        const saTimeline = (sa.timeline || []).filter(e => e.type === 'assistant' && e.tokens);
+        if (saTimeline.length === 0) return;
+
+        const col = subAgentColor(sa.agentType || 'general-purpose');
+        const points = saTimeline.map(e => {
+          const t = e.tokens;
+          const total = t.input + t.cacheCreation + t.cacheRead;
+          const fillVal = Math.min(100, total / CONTEXT_WINDOW * 100);
+          return { x: new Date(e.timestamp).getTime() - t0, y: fillVal, total };
+        });
+
+        subAgentFillDatasets.push({
+          label: `${sa.agentType || 'agent'} #${idx + 1}`,
+          data: points,
+          yAxisID: 'yFill',
+          pointRadius: 0,
+          borderWidth: 1.2,
+          borderColor: col,
+          backgroundColor: col + '15',
+          fill: false,
+          spanGaps: false,
+          borderDash: [4, 2],
+          order: 3,
+        });
+      });
+
       if (detailChartTimeline) detailChartTimeline.destroy();
       if (detailChartFill) { detailChartFill.destroy(); detailChartFill = null; }
 
@@ -519,6 +555,7 @@
               borderWidth: 2,
               pointRadius: 4, pointHoverRadius: 6, pointHitRadius: 8, pointStyle: 'circle', showLine: false, order: 1,
             },
+            ...subAgentFillDatasets,
           ]
         },
         options: {

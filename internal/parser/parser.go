@@ -123,6 +123,23 @@ func parseSubAgentFile(path string) (model.SubAgentInfo, error) {
 						}
 						info.ToolEvents = append(info.ToolEvents, evt)
 					}
+
+					// タイムラインエントリ（トークン情報）の抽出
+					te := model.TimelineEntry{
+						Timestamp: ts,
+						Type:      "assistant",
+						Model:     entry.Message.Model,
+					}
+					if entry.Message.Usage != nil {
+						u := entry.Message.Usage.ToTokenUsage()
+						te.Tokens = &u
+					}
+					tools := make([]string, len(toolUses))
+					for i, tu := range toolUses {
+						tools[i] = tu.Name
+					}
+					te.Tools = tools
+					info.Timeline = append(info.Timeline, te)
 				}
 			}
 		}
