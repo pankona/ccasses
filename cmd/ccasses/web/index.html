@@ -459,18 +459,29 @@
       }));
       const subAgentPointColors = subAgentPoints.map(p => subAgentColor(p.agentType));
 
-      // SubAgent ツールイベント（y=10 固定で下部にプロット）
+      // SubAgent ツールイベント（サブエージェントのfill%折れ線上にプロット）
       const subAgentToolPoints  = [];
       const subAgentToolColors  = [];
       (subAgents || []).forEach(sa => {
         const col = subAgentColor(sa.agentType || 'general-purpose');
+        const saTimeline = (sa.timeline || []).filter(e => e.type === 'assistant' && e.tokens);
+        const fillData = saTimeline.map(e => {
+          const t = e.tokens;
+          const total = t.input + t.cacheCreation + t.cacheRead;
+          return { ts: new Date(e.timestamp).getTime(), fill: Math.min(100, total / CONTEXT_WINDOW * 100) };
+        });
         (sa.toolEvents || []).forEach(ev => {
+          const evTs = new Date(ev.timestamp).getTime();
+          let fillVal = 0;
+          for (let i = fillData.length - 1; i >= 0; i--) {
+            if (fillData[i].ts <= evTs) { fillVal = fillData[i].fill; break; }
+          }
           subAgentToolPoints.push({
-            x: new Date(ev.timestamp).getTime() - t0,
-            y: 10,
+            x: evTs - t0,
+            y: fillVal,
             tools: ev.tools || [],
             agentType: sa.agentType || 'general-purpose',
-            ts: new Date(ev.timestamp).getTime(),
+            ts: evTs,
           });
           subAgentToolColors.push(col);
         });
@@ -611,27 +622,6 @@
               }
             });
 
-            // SubAgent 期間バンド（チャート下部20pxに描画）
-            const bandH = 14;
-            const bandY = chartArea.bottom - bandH - 2;
-            subAgentPoints.forEach(sa => {
-              const xL = Math.max(chartArea.left,  scales.x.getPixelForValue(sa.x));
-              const xR = Math.min(chartArea.right, scales.x.getPixelForValue(sa.xEnd));
-              if (xR <= xL) return;
-              const col = subAgentColor(sa.agentType);
-              ctx.fillStyle = col + '55'; // 33% opacity
-              ctx.fillRect(xL, bandY, xR - xL, bandH);
-              ctx.strokeStyle = col;
-              ctx.lineWidth = 1;
-              ctx.strokeRect(xL, bandY, xR - xL, bandH);
-              const bw = xR - xL;
-              if (bw > 40) {
-                ctx.fillStyle = col;
-                ctx.font = 'bold 8px system-ui';
-                ctx.textAlign = 'center';
-                ctx.fillText(sa.agentType || 'agent', (xL + xR) / 2, bandY + 10);
-              }
-            });
 
             ctx.restore();
           }
